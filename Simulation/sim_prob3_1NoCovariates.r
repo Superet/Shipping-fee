@@ -19,8 +19,8 @@ library(ggplot2)
 set.seed(66)
 
 # Set parameters 
-beta	<- 5
-alpha	<- 150				
+beta	<- 6
+alpha	<- 1500				
 N		<- 3000							# Number of observations
 I 		<- 250000/12					
 MO		<- 1000
@@ -176,8 +176,9 @@ ggplot(ggtmp, aes(y, u)) + geom_line() +
 #################
 K			<- 5000									# Number of simulation draws
 eps.draw	<- matrix(rgev(K*2), K, 2)				# Draws for estimation
+ly.min		<- -5									# Lower bound of log(y) in simulation 
 
-SimDist.fn	<- function(param, esp.draw, plotit = FALSE){
+SimDist.fn	<- function(param, eps.draw, plotit = FALSE){
 	beta	<- param[1]
 	alpha	<- param[2]
 	
@@ -189,7 +190,7 @@ SimDist.fn	<- function(param, esp.draw, plotit = FALSE){
 	# Derive the empirical distribution 
 	p0		<- mean(y == 0)							# P(y == 0 )
 	p.mo	<- mean(y == MO)						# P(y == MO)
-	g		<- try(density(y[y>0 & y!= MO], from = 0, to = I), silent = T) # g(y) for continuous y
+	g		<- try(density(log(y)[y>0 & y!= MO], from = ly.min, to = log(I)), silent = T) # g(y) for continuous y
 	if(class(g) == "try-error"){
 		# When no values are such that y>0 & y!= MO, then we have g(y)
 		g		<- function(y){0}
@@ -202,9 +203,12 @@ SimDist.fn	<- function(param, esp.draw, plotit = FALSE){
 # 		}												# Directly write the Kernel density function
 	}
 	if(plotit){
-		tmp	<- seq(0, 2*MO, length = 50)
-		tmpd<- g(tmp)	
-		plot(tmp, tmpd, type = "line")
+		tmp	<- seq(exp(ly.min), 2*MO, length = 50)
+		tmpd<- g(log(tmp))	
+		par(mfrow = c(3, 1))
+		print(plot(density(y), xlab="y", ylab = "density", main = "Density of simulated expenditure"))
+		print(plot(density(y), xlim = range(tmp), xlab="y", ylab = "density", main = "Density of simulated expenditure"))		
+		print(plot(tmp, tmpd, type = "l", xlab = "y", ylab = "density", main = "Approximated density function"))
 	}
 	return(list(p0 = p0, p.mo = p.mo, g = g))
 }
@@ -213,7 +217,7 @@ SimDist.fn	<- function(param, esp.draw, plotit = FALSE){
 out	<- SimDist.fn(c(beta, alpha), eps.draw)
 out$p0; exp(-beta)/(1 + exp(-beta))						# The derived P(y == 0) = exp(-beta)/(1 + exp(-beta))
 out$p.mo
-out$p0 + out$p.mo + integrate(out$g, 0, I, subdivisions = 500)$value		# Should equal to 1
+out$p0 + out$p.mo + integrate(out$g, ly.min, log(I))$value		# Should equal to 1
 
 ll.fn <- function(param, eps.draw){
 	param[2]<- exp(param[2])
@@ -232,10 +236,10 @@ ll.fn <- function(param, eps.draw){
 	l0 		<- log(p0)
 	lp.mo	<- log(p.mo)
 	lp.mo	<- ifelse(lp.mo == -Inf | is.na(lp.mo), e, lp.mo)
-	l.cont	<- g(y)
-	l.cont[l.cont< psmall]	<- psmall
-	l.cont	<- log(l.cont)
-# 	l.cont	<- ifelse(l.cont == -Inf | is.na(l.cont), e, l.cont)
+	l.cont	<- e
+	sel		<- y>0 & y!=MO
+	l.cont[sel] <- log(g(log(y[sel])))
+	l.cont	<- ifelse(l.cont == -Inf | is.na(l.cont), e, l.cont)
 	ll		<- 	1*(y == 0)*l0 + 
 				1*(y==MO)*lp.mo + 
 				1*(y>0 & y!= MO)*l.cont
@@ -244,13 +248,13 @@ ll.fn <- function(param, eps.draw){
 
 # NOTE: the estimation is VERY sensitive to initial values if K is not large enough
 system.time(tmp <- ll.fn(c(beta, log(alpha)), eps.draw))
-beta.init	<- c(beta, log(alpha))
-sol		<- maxLik(ll.fn, start = beta.init, eps.draw= eps.draw, method = "NM")
+theta.init	<- c(beta, log(alpha))
+sol		<- maxLik(ll.fn, start = theta.init, eps.draw= eps.draw, method = "NM")
 summary(sol)
 matrix(cbind(c(beta, log(alpha)), coef(sol)), 2,2, dimnames = list(c("beta", "log(alpha)"), c("true", "estimate")))
 
-beta.init	<- c(-.8, log(.9))
-sol1		<- maxLik(ll.fn, start = beta.init, eps.draw= eps.draw, method = "NM")
+theta.init	<- c(1, log(4))
+sol1		<- maxLik(ll.fn, start = theta.init, eps.draw= eps.draw, method = "NM")
 summary(sol1)
 matrix(cbind(c(beta, log(alpha)), coef(sol1)), 2,2, dimnames = list(c("beta", "log(alpha)"), c("true", "estimate")))
 
@@ -263,8 +267,8 @@ lines(tmp, tmp1)
 abline(v = beta, col = "red")
 
 # Fix beta
-tmp	<- seq(-1, 1, .05) + log(alpha)
-tmp1	<- sapply(tmp, function(x) sum(ll.fn(c(beta, x), eps.draw)))
+tmp	<- seq(-5, 2, .2) + log(alpha)
+tmp1	<- sapply(tmp, function(x) sum(ll.fn(c(beta, x), eps.draw)) )
 plot(tmp, tmp1, xlab = "log(alpha)", ylab = "Loglikelihood")
 lines(tmp, tmp1)
 abline(v = log(alpha), col = "red")
